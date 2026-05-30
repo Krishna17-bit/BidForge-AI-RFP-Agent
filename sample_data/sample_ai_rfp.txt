@@ -1,0 +1,31 @@
+ACME Manufacturing Group - Request for Proposal
+Project: AI Document Intelligence and Operations Automation Pilot
+
+ACME is seeking a technology partner to design and implement a 6-week pilot for an AI assistant that helps operations and procurement teams search internal SOPs, maintenance manuals, supplier contracts, and incident reports. The solution must support document upload, source-grounded answers, audit logs, and a human approval step before any outbound email or workflow update.
+
+Scope of work:
+1. The vendor shall build a secure web interface where operations users can upload PDF, DOCX, TXT, and CSV files.
+2. The system must extract key information from supplier contracts, maintenance manuals, and SOP documents.
+3. The assistant should answer questions with citations to source documents and should say when evidence is missing.
+4. The vendor must include a risk review workflow for unsupported claims, missing evidence, and ambiguous user requests.
+5. The system should classify document type and route the request to the correct workflow.
+6. The solution must include an admin-facing audit log of user questions, retrieved sources, generated answers, and approval decisions.
+7. The vendor should include a dashboard summarizing document coverage, common risks, and unresolved questions.
+8. The solution should integrate with Google Drive or SharePoint in a later phase, but the pilot may use local upload.
+9. The vendor must provide deployment documentation and a handover session.
+10. The vendor should complete the pilot within 6 weeks.
+11. Security requirements include no training on client data, environment-based secrets, role-based access in the production phase, and clear data retention assumptions.
+12. The proposal should include milestones, assumptions, key risks, and a rough team structure.
+
+Evaluation criteria:
+- Relevant experience with RAG, document AI, workflow automation, and Python/FastAPI or similar backend systems.
+- Quality of implementation approach and architecture.
+- Evidence of ability to handle hallucination risk and auditability.
+- Practical timeline and communication process.
+- Clarity of proposal and assumptions.
+
+Questions for vendor:
+- What is your recommended pilot architecture?
+- How will you prevent unsupported answers?
+- What information do you need from ACME before kickoff?
+- How would you scale the pilot into production?

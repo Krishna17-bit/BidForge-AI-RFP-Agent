@@ -1,0 +1,8 @@
+Freelance / small agency capability profile:
+- AI/ML engineer with experience building RAG agents over PDFs, technical documents, and scientific papers.
+- Built Streamlit and FastAPI applications for document upload, source-grounded answers, OCR/document parsing, and workflow automation.
+- Experience with agentic workflows: intent parsing, tool planning, attachment handling, email drafting, spreadsheet updates, and execution logs.
+- Strong Python stack: FastAPI, Streamlit, LangChain-style orchestration, vector search, BM25/hybrid retrieval, reranking concepts, pandas, scikit-learn, and API integration.
+- Research background in scientific AI, astrophysics/HEP ML, and digital-twin telemetry analytics, useful for technical clients and complex data workflows.
+- Delivery style: milestone-based, demo-first, clear assumptions, human approval for risky actions, and documentation handover.
+- Constraints: production security/SSO/RBAC can be scoped as Phase 2 if not available during a pilot.
