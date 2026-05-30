@@ -20,7 +20,7 @@ The UI does **not** expose LLM/provider controls. Configure keys in `.env` only.
 
 ---
 
-## Why this project is portfolio-ready
+## Why this project 
 
 Most public RFP demos are generic proposal writers. This project is different because it includes:
 
@@ -33,7 +33,6 @@ Most public RFP demos are generic proposal writers. This project is different be
 7. Proposal drafting plus reviewer quality gate
 8. Exportable client-facing deliverables
 9. Gemini-first execution with Groq fallback
-10. A clean black/white UI suitable for client demos
 
 ---
 
@@ -49,7 +48,7 @@ Most public RFP demos are generic proposal writers. This project is different be
 
 ---
 
-## Setup in VS Code
+## Setup 
 
 ### 1. Unzip and open folder
 
@@ -160,15 +159,3 @@ The agent uses these evidence documents to avoid unsupported claims.
 This tool drafts and analyzes proposals. You should still manually review outputs before sending anything to a client. The tool is designed to flag missing evidence and uncertainty, but final business commitments, pricing, legal claims, and compliance statements require human approval.
 
 ---
-
-## Suggested GitHub repo name
-
-```text
-bidforge-ai-rfp-agent
-```
-
-Suggested description:
-
-```text
-Multi-agent RFP analyzer and proposal drafting assistant with compliance matrix, evidence mapping, risk review, and DOCX exports.
-```
