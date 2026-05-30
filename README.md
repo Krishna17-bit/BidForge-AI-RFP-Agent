@@ -150,8 +150,6 @@ Optional evidence documents:
 - Past proposal snippets
 - Capability statement
 
-The agent uses these evidence documents to avoid unsupported claims.
-
 ---
 
 ## Important safety note
