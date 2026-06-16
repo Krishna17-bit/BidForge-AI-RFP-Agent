@@ -46,7 +46,7 @@ bidforge-ai/
 
 ---
 
-## Colorful Architectural Diagrams
+## Architectural Diagrams
 
 ### 1. BidForge AI System Architecture
 
