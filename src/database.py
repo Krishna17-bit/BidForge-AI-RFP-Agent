@@ -16,10 +16,20 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     
-    # 1. Opportunities
+    # 0. Workspaces
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        created_at TEXT
+    )
+    """)
+    
+    # 1. Opportunities (added workspace_id foreign key)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS opportunities (
         id TEXT PRIMARY KEY,
+        workspace_id TEXT,
         title TEXT,
         buyer TEXT,
         source TEXT,
@@ -36,7 +46,8 @@ def init_db():
         risk_score INTEGER,
         decision TEXT,
         created_at TEXT,
-        updated_at TEXT
+        updated_at TEXT,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
     )
     """)
     
@@ -121,6 +132,20 @@ def init_db():
         completion_status TEXT,
         version INTEGER,
         FOREIGN KEY(opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE
+    )
+    """)
+    
+    # Proposal Versions (for Git-like history tracking)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS proposal_versions (
+        id TEXT PRIMARY KEY,
+        opportunity_id TEXT,
+        section_id TEXT,
+        version_number INTEGER,
+        draft_content TEXT,
+        created_at TEXT,
+        FOREIGN KEY(opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+        FOREIGN KEY(section_id) REFERENCES proposal_sections(id) ON DELETE CASCADE
     )
     """)
     
@@ -233,27 +258,35 @@ def execute_read(query: str, params: tuple = ()) -> list[dict[str, Any]]:
     return result
 
 def seed_demo_data():
-    # Only seed if no opportunities exist
+    init_db()
+    
+    # Check if workspaces are seeded
+    w_check = execute_read("SELECT count(*) as count FROM workspaces")
+    if not w_check or w_check[0]["count"] == 0:
+        now_str = datetime.now().isoformat()
+        execute_query("INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)", ("WS-001", "Commercial Sales Workspace", now_str))
+        execute_query("INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)", ("WS-002", "Government Contractor (GovCon) Workspace", now_str))
+
+    # Only seed opportunities if empty
     existing = execute_read("SELECT count(*) as count FROM opportunities")
     if existing and existing[0]["count"] > 0:
         return
         
-    init_db()
     now_str = datetime.now().isoformat()
     
     # Define sample opportunities
     opps = [
-        ("OPP-001", "Enterprise RAG Intelligence System", "Global Logistics Corp", "Upwork Job Post", "Freelance job", "Tech Services", "50,000 USD", "2026-07-20", "Upwork Portal", "hiring@globallogistics.com", "Proposal, Case Studies, Security Questionnaire", "Bid decision", "Sarah Connor", 88, 20, "Strong bid", now_str, now_str),
-        ("OPP-002", "State Health Department Portal RFP", "Department of Health", "Tender Notice", "RFP", "GovCon", "350,000 USD", "2026-08-15", "GovTenders.gov", "rfp-contact@health.gov", "Technical Response, Compliance Matrix, Price Proposal, Past Performance", "Reviewing", "John Doe", 75, 45, "Bid with caution", now_str, now_str),
-        ("OPP-003", "AI Customer Support Agent Integration", "Apex FinTech", "Client Brief", "Client brief", "Finance", "25,000 USD", "2026-06-30", "Email to BD", "contact@apexfintech.com", "Proposal, MSA, SLA draft", "Won", "Sarah Connor", 92, 10, "Strong bid", now_str, now_str),
-        ("OPP-004", "Gov Cloud Security Questionnaire", "Federal Agency", "Security Questionnaire", "Security questionnaire", "GovCon", "N/A", "2026-07-10", "Secure Upload Link", "sec-audit@gov.mil", "Completed XLS spreadsheet, ISO Certs", "Proposal drafting", "Alex Mercer", 62, 50, "Bid with caution", now_str, now_str),
-        ("OPP-005", "Distributed Blockchain Ledger Tender", "Metro Transit Authority", "Tender RFP", "Tender", "Transit", "180,000 USD", "2026-09-01", "Procurement Portal", "transit-bid@metro.org", "Technical approach, Financial offer, Security clearance", "No-bid", "John Doe", 35, 80, "No-bid", now_str, now_str),
+        ("OPP-001", "WS-001", "Enterprise RAG Intelligence System", "Global Logistics Corp", "Upwork Job Post", "Freelance job", "50,000 USD", "2026-07-20", "Upwork Portal", "hiring@globallogistics.com", "Proposal, Case Studies, Security Questionnaire", "Bid decision", "Sarah Connor", 88, 20, "Strong bid", now_str, now_str),
+        ("OPP-002", "WS-002", "State Health Department Portal RFP", "Department of Health", "Tender Notice", "RFP", "350,000 USD", "2026-08-15", "GovTenders.gov", "rfp-contact@health.gov", "Technical Response, Compliance Matrix, Price Proposal, Past Performance", "Reviewing", "John Doe", 75, 45, "Bid with caution", now_str, now_str),
+        ("OPP-003", "WS-001", "AI Customer Support Agent Integration", "Apex FinTech", "Client Brief", "Client brief", "25,000 USD", "2026-06-30", "Email to BD", "contact@apexfintech.com", "Proposal, MSA, SLA draft", "Won", "Sarah Connor", 92, 10, "Strong bid", now_str, now_str),
+        ("OPP-004", "WS-002", "Gov Cloud Security Questionnaire", "Federal Agency", "Security Questionnaire", "Security questionnaire", "N/A", "2026-07-10", "Secure Upload Link", "sec-audit@gov.mil", "Completed XLS spreadsheet, ISO Certs", "Proposal drafting", "Alex Mercer", 62, 50, "Bid with caution", now_str, now_str),
+        ("OPP-005", "WS-001", "Distributed Blockchain Ledger Tender", "Metro Transit Authority", "Tender RFP", "Tender", "180,000 USD", "2026-09-01", "Procurement Portal", "transit-bid@metro.org", "Technical approach, Financial offer, Security clearance", "No-bid", "John Doe", 35, 80, "No-bid", now_str, now_str),
     ]
     
     for o in opps:
         execute_query("""
-        INSERT INTO opportunities (id, title, buyer, source, type, industry, budget, deadline, submission_portal, contact_details, required_documents, status, owner, fit_score, risk_score, decision, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO opportunities (id, workspace_id, title, buyer, source, type, industry, budget, deadline, submission_portal, contact_details, required_documents, status, owner, fit_score, risk_score, decision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, o)
         
     # Extracted Requirements for OPP-001
@@ -322,6 +355,14 @@ def seed_demo_data():
         INSERT INTO proposal_sections (id, opportunity_id, section_name, draft_content, completion_status, version)
         VALUES (?, ?, ?, ?, ?, ?)
         """, s)
+
+    # Seed initial proposal versions for tracking
+    for s in sections_opp1:
+        vid = f"V_{s[0]}_1"
+        execute_query("""
+        INSERT INTO proposal_versions (id, opportunity_id, section_id, version_number, draft_content, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (vid, "OPP-001", s[0], 1, s[3], now_str))
 
     # SME tasks
     tasks = [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import zipfile
+import time
 from pathlib import Path
 from datetime import datetime, date
 
@@ -20,6 +21,7 @@ from src.retrieval import EvidenceIndex
 from src.utils import now_slug, safe_filename
 from src.config import settings
 from src.api import run_api_server
+from src.ocr import extract_ocr_text
 
 # Initialize Database and Background API Server
 init_db()
@@ -179,6 +181,13 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+# Workspace Selection Selector
+workspaces = execute_read("SELECT * FROM workspaces ORDER BY name ASC")
+ws_names = [w["name"] for w in workspaces]
+chosen_ws_name = st.sidebar.selectbox("📂 Workspace Profile", ws_names)
+chosen_ws_id = workspaces[ws_names.index(chosen_ws_name)]["id"]
+st.session_state["workspace_id"] = chosen_ws_id
+
 # Sidebar Page Navigation Selector
 page = st.sidebar.radio(
     "Navigation Workspace",
@@ -194,6 +203,7 @@ page = st.sidebar.radio(
         "🔗 Evidence Mapping",
         "🎯 Proposal Strategy",
         "✍️ Proposal Builder",
+        "💬 RFP Chat Sandbox",
         "📝 Questionnaire Mode",
         "👥 SME Tasks",
         "💳 Pricing & Assumptions",
@@ -207,27 +217,34 @@ page = st.sidebar.radio(
     ]
 )
 
-# Helper to fetch active opportunities list
+# Helper to fetch active opportunities list filtered by active workspace
 def get_opp_choices() -> list[tuple[str, str]]:
-    rows = execute_read("SELECT id, title FROM opportunities WHERE status != 'Archived' ORDER BY title ASC")
+    rows = execute_read("SELECT id, title FROM opportunities WHERE workspace_id = ? AND status != 'Archived' ORDER BY title ASC", (st.session_state["workspace_id"],))
     return [(r["id"], f"{r['title']} ({r['id']})") for r in rows]
 
 # Main Workspace Route Handlers
 if page == "📊 Bid Dashboard":
-    st.title("Bid Dashboard")
+    st.title(f"Bid Dashboard - {chosen_ws_name}")
     st.markdown("Real-time portfolio metrics, active bids pipeline, and compliance gaps status.")
     
-    # DB aggregation
-    opps = execute_read("SELECT * FROM opportunities")
+    # DB aggregation filtered by active workspace
+    opps = execute_read("SELECT * FROM opportunities WHERE workspace_id = ?", (st.session_state["workspace_id"],))
     kb_items = execute_read("SELECT count(*) as count FROM knowledge_items")[0]["count"]
-    reqs = execute_read("SELECT count(*) as count FROM extracted_requirements")[0]["count"]
-    compliance_items = execute_read("SELECT status FROM compliance_matrix_items")
     
+    # Fetch requirements count for current workspace
+    reqs_count = 0
+    gaps_count = 0
+    if opps:
+        opp_ids = [f"'{o['id']}'" for o in opps]
+        opp_id_str = ", ".join(opp_ids)
+        reqs_count = execute_read(f"SELECT count(*) as count FROM extracted_requirements WHERE opportunity_id IN ({opp_id_str})")[0]["count"]
+        compliance_items = execute_read(f"SELECT status FROM compliance_matrix_items WHERE opportunity_id IN ({opp_id_str})")
+        gaps_count = len([c for c in compliance_items if c["status"] in ("Gap", "Unknown", "Partial")])
+        
     total_opps = len(opps)
     active_bids = len([o for o in opps if o["status"] not in ("Won", "Lost", "No-bid")])
     won_bids = len([o for o in opps if o["status"] == "Won"])
     lost_bids = len([o for o in opps if o["status"] == "Lost"])
-    nobid_decisions = len([o for o in opps if o["status"] == "No-bid"])
     
     # Calculate averages
     fit_scores = [o["fit_score"] for o in opps if o["fit_score"] is not None]
@@ -238,9 +255,6 @@ if page == "📊 Bid Dashboard":
     # Win rate calculation
     win_rate = int(won_bids / (won_bids + lost_bids) * 100) if (won_bids + lost_bids) > 0 else 0
     
-    # Compliance gaps count
-    gaps_count = len([c for c in compliance_items if c["status"] in ("Gap", "Unknown", "Partial")])
-    
     # Display Metrics Row 1
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -250,7 +264,7 @@ if page == "📊 Bid Dashboard":
     with c3:
         st.markdown(f'<div class="metric-card"><div class="metric-label">Win Rate</div><div class="metric-value">{win_rate}%</div></div>', unsafe_allow_html=True)
     with c4:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Knowledge Base Base Items</div><div class="metric-value">{kb_items}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Knowledge Base Items</div><div class="metric-value">{kb_items}</div></div>', unsafe_allow_html=True)
         
     # Display Metrics Row 2
     c5, c6, c7, c8 = st.columns(4)
@@ -259,7 +273,7 @@ if page == "📊 Bid Dashboard":
     with c6:
         st.markdown(f'<div class="metric-card"><div class="metric-label">Avg Risk Score</div><div class="metric-value" style="color: #b91c1c !important;">{avg_risk}/100</div></div>', unsafe_allow_html=True)
     with c7:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">Total Extracted Reqs</div><div class="metric-value">{reqs}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Total Extracted Reqs</div><div class="metric-value">{reqs_count}</div></div>', unsafe_allow_html=True)
     with c8:
         st.markdown(f'<div class="metric-card"><div class="metric-label">Compliance Gaps Remaining</div><div class="metric-value" style="color: #d97706 !important;">{gaps_count}</div></div>', unsafe_allow_html=True)
 
@@ -267,7 +281,6 @@ if page == "📊 Bid Dashboard":
     col_l, col_r = st.columns([1.1, 0.9], gap="medium")
     with col_l:
         st.markdown('<div class="card"><div class="card-title">Opportunities Pipeline Standings</div></div>', unsafe_allow_html=True)
-        # Convert to DF and plot
         if opps:
             df_opps = pd.DataFrame(opps)
             status_df = df_opps["status"].value_counts().reset_index()
@@ -278,7 +291,7 @@ if page == "📊 Bid Dashboard":
             
     with col_r:
         st.markdown('<div class="card"><div class="card-title">Upcoming Deadlines</div></div>', unsafe_allow_html=True)
-        deadlines = execute_read("SELECT title, buyer, deadline, status FROM opportunities WHERE deadline != '' ORDER BY deadline ASC LIMIT 5")
+        deadlines = execute_read("SELECT title, buyer, deadline, status FROM opportunities WHERE workspace_id = ? AND deadline != '' ORDER BY deadline ASC LIMIT 5", (st.session_state["workspace_id"],))
         if deadlines:
             for d in deadlines:
                 st.markdown(f"**{d['deadline']}** — {d['title']} (Client: *{d['buyer']}*)  \n`Status: {d['status']}`")
@@ -323,10 +336,10 @@ elif page == "📥 Opportunity Intake":
         if not title or not buyer:
             st.warning("Opportunity Title and Buyer/Client Name are required.")
         else:
-            # File validation checks
             all_text = pasted_text.strip()
             total_size_mb = 0
             scanned_warning = False
+            ocr_triggered = False
             
             loaded_docs = []
             if uploaded_files:
@@ -340,16 +353,35 @@ elif page == "📥 Opportunity Intake":
                     # Loader logic
                     try:
                         doc = load_uploaded_file(f)
-                        loaded_docs.append(doc)
                         # Check for scanned PDF
                         if f.name.endswith(".pdf") and len(doc.text.strip()) < 150 * len(doc.pages):
                             scanned_warning = True
+                            # Attempting OCR Recovery
+                            with st.status(f"Scanning & OCR processing: {f.name}...", expanded=True) as status_msg:
+                                # Write file locally to temp path for Tesseract conversion
+                                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+                                    tmp_file.write(f.getvalue())
+                                    tmp_path = tmp_file.name
+                                try:
+                                    recovered_text = extract_ocr_text(tmp_path)
+                                    doc = LoadedDocument(
+                                        name=f.name,
+                                        text=recovered_text,
+                                        pages=[{"page": 1, "text": recovered_text}]
+                                    )
+                                    ocr_triggered = True
+                                    status_msg.update(label="OCR Text Restoration Complete", state="complete")
+                                finally:
+                                    Path(tmp_path).unlink(missing_ok=True)
+                        loaded_docs.append(doc)
                     except Exception as e:
                         st.error(f"Could not load file {f.name}: {e}")
                         st.stop()
             
-            if scanned_warning:
+            if scanned_warning and not ocr_triggered:
                 st.warning("⚠️ Warning: Uploaded PDF appears to be a scanned image or lacks readable text. Requirements extraction accuracy may be degraded. Proposing low-text extraction mode.")
+            elif ocr_triggered:
+                st.success("Successfully completed OCR text restoration from file images!")
             
             # Combine text
             docs_text = "\n\n".join([f"# {d.name}\n{d.text}" for d in loaded_docs])
@@ -359,14 +391,14 @@ elif page == "📥 Opportunity Intake":
                 st.error("No RFP documents or pasted brief text found. Please provide context.")
                 st.stop()
                 
-            # Insert into database
+            # Insert into database associated with active workspace
             opp_id = f"OPP_{int(time.time())}"
             now_str = datetime.now().isoformat()
             
             execute_query("""
-            INSERT INTO opportunities (id, title, buyer, source, type, industry, budget, deadline, submission_portal, contact_details, required_documents, status, owner, fit_score, risk_score, decision, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (opp_id, title, buyer, opp_type, opp_type, industry, budget, deadline.isoformat(), portal, "", full_context, "New", owner, 50, 50, "Needs More Info", now_str, now_str))
+            INSERT INTO opportunities (id, workspace_id, title, buyer, source, type, industry, budget, deadline, submission_portal, contact_details, required_documents, status, owner, fit_score, risk_score, decision, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (opp_id, st.session_state["workspace_id"], title, buyer, opp_type, opp_type, industry, budget, deadline.isoformat(), portal, "", full_context, "New", owner, 50, 50, "Needs More Info", now_str, now_str))
             
             # Run Ingestion Agents
             with st.spinner("Extracting requirements and assessing initial fit..."):
@@ -398,7 +430,7 @@ elif page == "📋 Pipeline Board":
     st.markdown("CRM-Lite Kanban board. Easily view opportunity stages and change statuses.")
     
     stages = ["New", "Reviewing", "Bid decision", "Proposal drafting", "SME review", "Final review", "Submitted", "Won", "Lost", "No-bid"]
-    opps = execute_read("SELECT * FROM opportunities")
+    opps = execute_read("SELECT * FROM opportunities WHERE workspace_id = ?", (st.session_state["workspace_id"],))
     
     # Generate Kanban Board Layout
     cols = st.columns(len(stages))
@@ -435,7 +467,7 @@ elif page == "🔍 RFP Analyzer":
     
     opp_choices = get_opp_choices()
     if not opp_choices:
-        st.info("No active opportunities found. Add one in Opportunity Intake.")
+        st.info("No active opportunities found in this workspace. Add one in Opportunity Intake.")
     else:
         opp_id = st.selectbox("Select Opportunity to Analyze", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
@@ -460,7 +492,6 @@ elif page == "🔍 RFP Analyzer":
                 st.success("Successfully completed analysis!")
                 st.experimental_rerun()
         else:
-            # Display spreadsheet editor for requirements
             df_reqs = pd.DataFrame(reqs)
             st.markdown("#### Requirements Details (Directly Editable Spreadsheet)")
             edited_df = st.data_editor(
@@ -482,9 +513,7 @@ elif page == "🔍 RFP Analyzer":
                 key="reqs_editor"
             )
             
-            # Save Changes button
             if st.button("Save Changes to Database"):
-                # Clean and save all rows
                 for idx, row in edited_df.iterrows():
                     rid = row.get("id")
                     if rid:
@@ -564,7 +593,6 @@ elif page == "📋 Compliance Matrix":
                         """, (cid, selected_id, row.get("requirement_id"), row.get("requirement"), row.get("status"), row.get("evidence"), row.get("response_strategy"), row.get("owner"), int(row.get("confidence", 80)), row.get("risk_level"), row.get("proposal_section"), row.get("notes")))
                 st.success("Compliance Matrix updated successfully!")
                 
-            # CSV Exporter shortcut
             st.markdown("---")
             csv_data = compliance_dataframe({"compliance_matrix": items}).to_csv(index=False).encode('utf-8')
             st.download_button("Export Compliance Matrix to CSV", csv_data, "compliance_matrix.csv", "text/csv")
@@ -617,7 +645,6 @@ elif page == "⚖️ Bid / No-Bid Engine":
         with c3:
             st.markdown(f'<div class="metric-card"><div class="metric-label">Original Decision</div><div class="metric-value">{opp_details["decision"]}</div></div>', unsafe_allow_html=True)
             
-        # Update Bid Score in DB
         if st.button("Save Score & Recommendation to DB"):
             execute_query("UPDATE opportunities SET fit_score = ?, decision = ? WHERE id = ?", (calculated_score, recommendation, selected_id))
             st.success("Decision ratings successfully persisted to opportunity CRM details!")
@@ -633,7 +660,6 @@ elif page == "☣️ Risk Analyzer":
         opp_id = st.selectbox("Select Opportunity", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
         
-        # Load risks
         risks = execute_read("SELECT * FROM risks WHERE opportunity_id = ?", (selected_id,))
         if not risks:
             st.warning("No risks scanned yet. Trigger parser matrix first.")
@@ -669,7 +695,6 @@ elif page == "☣️ Risk Analyzer":
                     unsafe_allow_html=True
                 )
             
-            # Manual Risk Addition
             st.markdown("---")
             st.subheader("Add Custom Risk Flag")
             with st.form("custom_risk_form"):
@@ -691,7 +716,6 @@ elif page == "📚 Knowledge Base":
     st.title("Reusable Capability & Evidence Library")
     st.markdown("Organize, tag, and approve past case studies, corporate profiles, CVs, and standard security responses.")
     
-    # Load KB items
     kb = execute_read("SELECT * FROM knowledge_items")
     df_kb = pd.DataFrame(kb)
     
@@ -730,7 +754,6 @@ elif page == "📚 Knowledge Base":
             st.experimental_rerun()
             
     with c2:
-        # Add new item form trigger
         with st.expander("Create New Library Record"):
             new_title = st.text_input("Title")
             new_type = st.selectbox("Type", ["Case Study", "Technical approach", "Security policy", "CV", "Exclusions", "Testimonial", "Profile"])
@@ -764,10 +787,8 @@ elif page == "🔗 Evidence Mapping":
         elif not kb_items:
             st.warning("Please add approved records to the 'Knowledge Base' first.")
         else:
-            # Build mini-retriever
             st.markdown("### Match Evidence via Local RAG Engine")
             
-            # Setup retrieval
             loaded_kb = [LoadedDocument(name=k["title"], text=k["content"], pages=[{"page": 1, "text": k["content"]}]) for k in kb_items]
             retriever = EvidenceIndex(loaded_kb)
             
@@ -791,7 +812,6 @@ elif page == "🔗 Evidence Mapping":
                             WHERE id = ?
                             """, (best_hit["text"], r["id"]))
                             
-                            # Also update in compliance matrix if exists
                             execute_query("""
                             UPDATE compliance_matrix_items 
                             SET evidence = ?, status = 'Compliant'
@@ -815,24 +835,21 @@ elif page == "🎯 Proposal Strategy":
         opp_id = st.selectbox("Select Opportunity", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
         
-        # Load opportunity details
         opp = execute_read("SELECT * FROM opportunities WHERE id = ?", (selected_id,))[0]
         
-        # Strategy generation / loading
         st.markdown('<div class="card"><div class="card-title">Corporate Positioning Theme</div>', unsafe_allow_html=True)
         pain_points = st.text_area("Client pain points detected", "Vague deliverable requirements, data governance and security audit mandates.")
         win_themes = st.text_area("Win themes (one per line)", "1. Fully secure SQLite local storage system\n2. Flexible agile delivery approach\n3. Pre-existing case studies in logistics modeling")
         differentiators = st.text_area("Our differentiators", "100% human-approved output pipelines, low-latency mock mode testing.")
         
         if st.button("Persist Strategy Configuration"):
-            themes_list = json.dumps([x.strip() for x in win_themes.split("\n") if x.strip()])
             execute_query("UPDATE opportunities SET required_documents = ? WHERE id = ?", (f"Pain: {pain_points}\nDiffs: {differentiators}", selected_id))
             st.success("Strategy themes configured successfully!")
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif page == "✍️ Proposal Builder":
     st.title("Proposal Draft Builder")
-    st.markdown("Section-by-section markdown builder. Direct editing, AI generation, and draft verification.")
+    st.markdown("Section-by-section markdown builder. Direct editing, AI generation, and version tracking.")
     
     opp_choices = get_opp_choices()
     if not opp_choices:
@@ -869,7 +886,7 @@ elif page == "✍️ Proposal Builder":
             
             # Section Editor
             st.markdown(f"#### Section: {chosen_sec} (Version {sec_data['version']})")
-            new_content = st.text_area("Markdown Content", value=sec_data["draft_content"], height=350)
+            new_content = st.text_area("Markdown Content", value=sec_data["draft_content"], height=280)
             status_opts = ["Draft", "Needs Review", "Approved", "Final"]
             new_status = st.selectbox("Status", status_opts, index=status_opts.index(sec_data["completion_status"]))
             
@@ -881,7 +898,15 @@ elif page == "✍️ Proposal Builder":
                     SET draft_content = ?, completion_status = ?, version = version + 1 
                     WHERE id = ?
                     """, (new_content, new_status, sec_data["id"]))
-                    st.success("Section persisted!")
+                    
+                    # Store historical version log
+                    vid = f"V_{sec_data['id']}_{int(time.time())}"
+                    execute_query("""
+                    INSERT INTO proposal_versions (id, opportunity_id, section_id, version_number, draft_content, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, (vid, selected_id, sec_data["id"], int(sec_data["version"] + 1), new_content, datetime.now().isoformat()))
+                    
+                    st.success("Section persisted to history!")
                     st.experimental_rerun()
             with col_r:
                 if st.button("AI-Regenerate Section"):
@@ -895,6 +920,75 @@ elif page == "✍️ Proposal Builder":
                         """, (res.get("proposal_draft"), sec_data["id"]))
                     st.success("Regenerated section successfully!")
                     st.experimental_rerun()
+            
+            # Version History List & Diff
+            st.markdown("---")
+            st.subheader("⏱️ Version Control History")
+            versions = execute_read("SELECT * FROM proposal_versions WHERE section_id = ? ORDER BY version_number DESC", (sec_data["id"],))
+            if not versions:
+                st.info("No prior versions tracked.")
+            else:
+                ver_opts = [f"Version {v['version_number']} ({v['created_at'][:16]})" for v in versions]
+                chosen_ver = st.selectbox("Compare with historic version", ver_opts)
+                hist_data = versions[ver_opts.index(chosen_ver)]
+                
+                # Side-by-Side Comparison
+                d1, d2 = st.columns(2)
+                with d1:
+                    st.markdown("**Current Draft**")
+                    st.text_area("Active Draft Panel", value=new_content, height=180, disabled=True, key="cur_ver_view")
+                with d2:
+                    st.markdown(f"**Historic: {chosen_ver}**")
+                    st.text_area("Historic Draft Panel", value=hist_data["draft_content"], height=180, disabled=True, key="hist_ver_view")
+                    
+                if st.button("Restore this version"):
+                    execute_query("UPDATE proposal_sections SET draft_content = ?, version = version + 1 WHERE id = ?", (hist_data["draft_content"], sec_data["id"]))
+                    st.success("Restored successfully!")
+                    st.experimental_rerun()
+
+elif page == "💬 RFP Chat Sandbox":
+    st.title("RFP Chat Sandbox")
+    st.markdown("Ask clarification questions directly to the uploaded RFP document using RAG vector searching.")
+    
+    opp_choices = get_opp_choices()
+    if not opp_choices:
+        st.info("No active opportunities found.")
+    else:
+        opp_id = st.selectbox("Select Opportunity to Chat With", [o[1] for o in opp_choices])
+        selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
+        
+        opp_details = execute_read("SELECT required_documents FROM opportunities WHERE id = ?", (selected_id,))[0]
+        brief_text = opp_details["required_documents"] or "Sample brief text"
+        
+        # Load index
+        mock_doc = LoadedDocument(name="RFP_Context.txt", text=brief_text, pages=[{"page": 1, "text": brief_text}])
+        retriever = EvidenceIndex([mock_doc])
+        
+        # UI chat loop
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = []
+            
+        for c in st.session_state["chat_history"]:
+            with st.chat_message(c["role"]):
+                st.write(c["content"])
+                
+        user_query = st.chat_input("Ask a question about the RFP requirements...")
+        if user_query:
+            st.session_state["chat_history"].append({"role": "user", "content": user_query})
+            with st.chat_message("user"):
+                st.write(user_query)
+                
+            # Perform RAG retrieval
+            context = retriever.top_context(user_query, k=3)
+            prompt = f"Answer the query based on the following RFP context. Context:\n{context}\nQuery: {user_query}"
+            
+            with st.spinner("Analyzing document..."):
+                agents = BidAgents()
+                res = agents.llm.generate(prompt, system="You are an expert bid analyst responding strictly based on document facts.")
+                
+            st.session_state["chat_history"].append({"role": "assistant", "content": res.text})
+            with st.chat_message("assistant"):
+                st.write(res.text)
 
 elif page == "📝 Questionnaire Mode":
     st.title("Questionnaire & Spreadsheet Response Mode")
@@ -920,7 +1014,6 @@ elif page == "📝 Questionnaire Mode":
                     res = agents.answer_questionnaire(selected_id, questions_list, "Local SQLite, AES-256 encryption at rest, SOC2 controls")
                     answers = res.get("answers", [])
                     
-                    # Store answers to DB
                     for idx, ans in enumerate(answers):
                         qid = f"QI_{selected_id}_{idx}"
                         execute_query("""
@@ -930,7 +1023,6 @@ elif page == "📝 Questionnaire Mode":
                 st.success("Questionnaire answered! Details stored below.")
                 st.experimental_rerun()
                 
-        # Display existing questionnaire items
         items = execute_read("SELECT * FROM questionnaire_items WHERE opportunity_id = ?", (selected_id,))
         if items:
             df_items = pd.DataFrame(items)
@@ -961,7 +1053,6 @@ elif page == "📝 Questionnaire Mode":
                         """, (row.get("detected_answer"), row.get("status"), qid))
                 st.success("Reviews and edits stored!")
                 
-                # Download answered CSV
                 export_df = edited_df[["question_text", "detected_answer", "status"]]
                 csv_data = export_df.to_csv(index=False).encode('utf-8')
                 st.download_button("Download Completed CSV Questionnaire", csv_data, "completed_questionnaire.csv", "text/csv")
@@ -1010,7 +1101,6 @@ elif page == "👥 SME Tasks":
                         """, (row.get("assignee"), row.get("due_date"), row.get("task_details"), row.get("related_req_id"), row.get("status"), row.get("comments"), row.get("decision"), tid))
                 st.success("SME task database updated successfully!")
                 
-        # Create task
         st.markdown("---")
         with st.form("create_task_form"):
             st.subheader("Assign New SME Task")
@@ -1058,16 +1148,11 @@ elif page == "❓ Clarification Questions":
         opp_id = st.selectbox("Select Opportunity", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
         
-        # Load questions
-        opp = execute_read("SELECT required_documents FROM opportunities WHERE id = ?", (selected_id,))[0]
-        
         st.markdown("### Suggested Clarifications")
-        # Generates basic clarification checklist
         st.markdown("1. **Timeline**: Will there be flexibility on the Phase 1 delivery window? (Priority: *High*)")
         st.markdown("2. **Integrations**: Are the target database APIs REST-compliant, or will we need custom GraphQL mappings? (Priority: *Medium*)")
         st.markdown("3. **SLA**: What are the specific uptime SLA thresholds for production operation? (Priority: *Low*)")
         
-        # Email export
         st.markdown("---")
         st.markdown("#### Export Draft Email to Buyer")
         email_draft = f"Subject: Clarification Questions for Bid submission - {opp_id}\n\nDear procurement team,\n\nWe are preparing our bid response for {opp_id}. Could you please clarify the following items...\n\nSincerely,\nProposal Lead"
@@ -1093,13 +1178,10 @@ elif page == "🔴 Red-Team Review":
                 agents = BidAgents()
                 res = agents.reviewer(selected_id, {"proposal_draft": proposal_text}, opp_row["required_documents"])
                 
-                # Save review results to Db
                 score = res.get("quality_score", 80)
                 execute_query("UPDATE opportunities SET risk_score = ? WHERE id = ?", (100 - score, selected_id))
                 
-                # Store notes
-                notes = res.get("reviewer_notes", [])
-                st.session_state["reviewer_notes"] = notes
+                st.session_state["reviewer_notes"] = res.get("reviewer_notes", [])
                 st.session_state["reviewer_score"] = score
                 
         if "reviewer_notes" in st.session_state:
@@ -1122,7 +1204,11 @@ elif page == "📦 Export Center":
         opp_id = st.selectbox("Select Opportunity", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
         
-        opp_details = execute_read("SELECT * FROM opportunities WHERE id = ?", (selected_id,))[0]
+        opp_details = execute_read("SELECT * FROM opportunities WHERE id = ?", (selected_id,))
+        if not opp_details:
+             st.error("Opportunity details not found.")
+             st.stop()
+        opp_details = opp_details[0]
         reqs = execute_read("SELECT * FROM extracted_requirements WHERE opportunity_id = ?", (selected_id,))
         compliance = execute_read("SELECT * FROM compliance_matrix_items WHERE opportunity_id = ?", (selected_id,))
         risks = execute_read("SELECT * FROM risks WHERE opportunity_id = ?", (selected_id,))
@@ -1148,7 +1234,6 @@ elif page == "📦 Export Center":
             "reviewer_notes": []
         }
         
-        # Temp exporters
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             md_path = tmp_path / "proposal.md"
@@ -1159,7 +1244,6 @@ elif page == "📦 Export Center":
             write_docx(bundle, docx_path)
             compliance_dataframe(bundle).to_csv(csv_path, index=False)
             
-            # ZIP exporter
             zip_buffer = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
             zip_buffer.close()
             with zipfile.ZipFile(zip_buffer.name, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1189,8 +1273,6 @@ elif page == "🏆 Win/Loss Learning":
         opp_id = st.selectbox("Select Opportunity", [o[1] for o in opp_choices])
         selected_id = opp_choices[[o[1] for o in opp_choices].index(opp_id)][0]
         
-        records = execute_read("SELECT * FROM win_loss_records WHERE opportunity_id = ?", (selected_id,))
-        
         with st.form("win_loss_form"):
             st.subheader("Record Post-Mortem Analytics")
             outcome = st.selectbox("Outcome status", ["Won", "Lost", "No-decision"])
@@ -1214,6 +1296,44 @@ elif page == "⚙️ System Settings":
     st.title("System Settings & Observability Logs")
     st.markdown("Configure multi-provider LLM API keys, test integrations, and audit execution logs.")
     
+    # Render Mock Connectors
+    st.markdown("### 🔗 Shared Cloud Integrations")
+    c_connect1, c_connect2 = st.columns(2)
+    with c_connect1:
+        st.markdown(
+            """
+            <div class="card">
+                <h5>📁 Google Drive Auto-Sync</h5>
+                <p><small>Status: Disconnected</small></p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        if st.button("Connect Google Drive"):
+            with st.spinner("Connecting directory..."):
+                time.sleep(0.8)
+                # Seed a mock synced opportunity
+                now_str = datetime.now().isoformat()
+                execute_query("""
+                INSERT INTO opportunities (id, workspace_id, title, buyer, source, type, status, owner, fit_score, risk_score, decision, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (f"OPP_SYNC_{int(time.time())}", st.session_state["workspace_id"], "Drive Synced RFP Brief", "Shared Drive Inc", "Google Drive Folder", "RFP", "New", "Sarah Connor", 72, 30, "Bid with caution", now_str, now_str))
+            st.success("Connected & Synced opportunity folder successfully!")
+            
+    with c_connect2:
+        st.markdown(
+            """
+            <div class="card">
+                <h5>📂 SharePoint Folder Synced</h5>
+                <p><small>Status: Disconnected</small></p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        if st.button("Connect SharePoint"):
+            st.success("Connected to SharePoint tenant directory!")
+
+    st.markdown("---")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="card"><div class="card-title">LLM Credentials</div>', unsafe_allow_html=True)
@@ -1240,13 +1360,16 @@ elif page == "⚙️ System Settings":
             execute_query("DROP TABLE IF EXISTS risks")
             execute_query("DROP TABLE IF EXISTS knowledge_items")
             execute_query("DROP TABLE IF EXISTS proposal_sections")
+            execute_query("DROP TABLE IF EXISTS proposal_versions")
             execute_query("DROP TABLE IF EXISTS sme_tasks")
             execute_query("DROP TABLE IF EXISTS questionnaire_items")
             execute_query("DROP TABLE IF EXISTS win_loss_records")
             execute_query("DROP TABLE IF EXISTS audit_logs")
             execute_query("DROP TABLE IF EXISTS eval_runs")
+            execute_query("DROP TABLE IF EXISTS workspaces")
             init_db()
             st.success("Database drop and schema re-initialization complete.")
+            st.experimental_rerun()
             
         if st.button("Re-inject Demo Sample Data"):
             seed_demo_data()

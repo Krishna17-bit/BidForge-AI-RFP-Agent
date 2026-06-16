@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 300px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 10px;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    h3 {
+      color: #4f46e5;
+      margin-top: 0;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 8px;
+    }
+    .status {
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-bottom: 10px;
+    }
+    select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+    button {
+      width: 100%;
+      padding: 8px 12px;
+      background: #4f46e5;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #4338ca;
+    }
+    .answer-item {
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      border-radius: 6px;
+      margin-top: 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .answer-item:hover {
+      border-color: #4f46e5;
+      background: #f0f9ff;
+    }
+  </style>
+</head>
+<body>
+  <h3>BidForge AI Helper</h3>
+  <div class="status">Local API connection: <span id="conn-status" style="color:red">Disconnected</span></div>
+  
+  <label for="opp-select">Active Opportunity</label>
+  <select id="opp-select">
+    <option value="">Select Opportunity...</option>
+  </select>
+
+  <button id="fetch-btn">Load Answer Library</button>
+  
+  <div id="answers-container"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
