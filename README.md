@@ -1,54 +1,60 @@
-# BidForge AI — Bid Decision & Proposal Automation Platform
+# BidForge AI — Bid Decision, Compliance, & Proposal Automation Platform
 
-> **BidForge AI** is an AI-powered opportunity-intelligence and proposal-automation platform for RFPs, RFIs, RFQs, grants, freelance jobs, security questionnaires, and client proposals. It functions as a **proposal team in a box**, taking opportunities from initial intake through compliance mapping, scoring, drafting, human review, and final package exports.
+> **BidForge AI** is a production-oriented, local-first opportunity intelligence and proposal automation platform for RFPs, RFIs, RFQs, grants, tender calls, security questionnaires, and client briefs. It operates as an **AI proposal team in a box**, guiding capture managers, freelancers, and pre-sales engineers from intake parsing through compliance validation, RAG groundings, red-team auditing, and package exports.
 
 ---
 
 ## Why BidForge AI Exists
 
-Enterprise proposal managers have heavy platforms with bloated answer libraries, but small teams, freelancers, SaaS sales teams, and agencies are left copy-pasting answers into generic chatbots. 
-
-BidForge AI closes this gap by focusing on the **entire bid lifecycle**:
-1. **Intake & Validation**: Ingesting files with integrity checks (detecting empty briefs or scanned PDFs).
-2. **Requirements Extraction**: Assigning stable IDs and source context to mandatory vs optional items.
-3. **Evidence groundings**: Grounding claims in a reusable capability library using RAG similarity matching.
-4. **Bid/No-Bid Decisioning**: Empowering users to rating fit score criteria before writing a single line.
-5. **Review Checklists**: Forcing a Red-Team review gate prior to document downloads.
+Most public RFP automation tools focus strictly on static answer-library management or simple chatbot generation. BidForge AI target critical market gaps by handling the **complete bid lifecycle**:
+1. **Multi-Workspace Partitioning**: Segment opportunities and assets between different agency, corporate, or freelancer profiles.
+2. **Scan-Aware Ingestion**: PDF size validations with OCR scanning fallbacks for image-only documents.
+3. **Rigorous Decision Engine**: Calculate fit and risk ratings across 16 capability sliders *before* writing drafts.
+4. **Hybrid RAG Evidence Grounding**: Leverage local TF-IDF matrices alongside cloud embeddings (Gemini/OpenAI) to match requirements to past projects.
+5. **Git-Like Version Timelines**: Save proposal draft edits, view side-by-side versions, and restore rollbacks from the database.
+6. **Programmatic API & Extension**: Query 20+ REST endpoints or use the loadable Chrome helper extension to autofill forms in online procurement portals.
 
 ---
 
-## Folder Structure
+## 📂 Folder Structure
 
 ```text
 bidforge-ai/
-├── app.py                     # Streamlit Frontend Web App
+├── app.py                     # Streamlit Frontend Web App Dashboard
 ├── src/
-│   ├── config.py              # Configuration & Environment loader
-│   ├── database.py            # SQLite database schema and seeding script
-│   ├── document_loader.py     # PDF, DOCX, TXT parser validation
-│   ├── llm_clients.py         # Unified LLM provider gateway with fallbacks & mock mode
-│   ├── agents.py              # Agent prompts for requirements, compliance, strategy
-│   ├── orchestrator.py        # Multi-agent coordination logic
-│   ├── retrieval.py           # TF-IDF local RAG index search
-│   ├── schemas.py             # Pydantic models for structured outputs
-│   ├── exporter.py            # DOCX, CSV exporter utilities
-│   └── api.py                 # FastAPI background REST endpoints
+│   ├── config.py              # Configuration Loader & Environment variables
+│   ├── database.py            # SQLite persistent database schema and seeding script
+│   ├── document_loader.py     # PDF, DOCX, TXT structure text parser
+│   ├── ocr.py                 # Scanned PDF/Image OCR scanner pipeline
+│   ├── llm_clients.py         # Unified multi-provider LLM adapter with mock engine
+│   ├── agents.py              # Agent prompt architectures & DB run tracing
+│   ├── orchestrator.py        # Multi-agent workflow coordinator
+│   ├── retrieval.py           # Local TF-IDF & dense embeddings retriever
+│   ├── schemas.py             # Pydantic structured output models
+│   └── api.py                 # FastAPI backend REST application
+├── browser-extension/         # Chrome Extension autocompleter helper files
+│   ├── manifest.json          # Extension permission manifest
+│   ├── popup.html             # Extension selector view layout
+│   ├── popup.js               # Extension API connector
+│   └── content.js             # Document field autofiller script
 ├── tests/
-│   ├── test_db.py             # Database CRUD tests
-│   ├── test_scoring.py        # Decision weight tests
-│   ├── test_document_loader.py# Ingestion parser tests
-│   └── test_api.py            # FastAPI integration tests
-├── .env.example               # Environment template
-├── .gitignore                 # Secure files filter
-├── requirements.txt           # Package dependencies
-└── README.md                  # Project documentation
+│   ├── test_db.py             # SQLite CRUD tests
+│   ├── test_scoring.py        # Rating model calculations
+│   ├── test_document_loader.py# File validation tests
+│   ├── test_api.py            # FastAPI route tests
+│   ├── test_ocr.py            # OCR fallback checks
+│   └── test_versioning.py     # Proposal version diff restore tests
+├── .env.example               # Environment variables template
+├── .gitignore                 # Excluded directories filters
+├── requirements.txt           # Python package dependencies
+└── README.md                  # System documentation
 ```
 
 ---
 
-## Architectural Diagrams
+## 🎨 Colorful Architectural Diagrams
 
-### 1. BidForge AI System Architecture
+### 1. System Architecture
 
 ```mermaid
 flowchart TD
@@ -60,7 +66,7 @@ flowchart TD
     U[Freelancer / Proposal Team]:::client --> UI[Streamlit UI Dashboard]:::client
     UI --> API[FastAPI Backend Server]:::api
     
-    API --> INTAKE[Intake Module]:::api
+    API --> INTAKE[Intake & OCR Module]:::api
     API --> PARSER[RFP Parser]:::api
     API --> REQ[Requirement Extractor]:::api
     API --> MATRIX[Compliance Matrix]:::api
@@ -174,104 +180,116 @@ flowchart TD
 
 ---
 
-## Setup & Ingesting
+## 🛠️ Setup & Installation
 
-### Prerequisites
+### 1. Python Environment Setup
+Install Python 3.9+ and execute the following commands in the project folder:
 
-Verify that python is installed:
 ```bash
-python --version
+# Clone & enter directory
+git clone <REPO_URL>
+cd bidforge-ai
+
+# Create and activate virtual environment
+python -m venv .venv
+# On Windows PowerShell:
+.\.venv\Scripts\Activate.ps1
+# On Mac/Linux:
+source .venv/bin/activate
+
+# Install required packages
+pip install -r requirements.txt
 ```
 
-### Installation
-
-1. Clone the repository and navigate into it:
-   ```bash
-   git clone <REPO_URL>
-   cd bidforge-ai
-   ```
-
-2. Copy the environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Install required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Run the Streamlit application:
-   ```bash
-   streamlit run app.py
-   ```
-   Both the Streamlit UI and the background FastAPI server (on port 8000) will start automatically.
+### 2. Run the Workspace
+```bash
+streamlit run app.py
+```
+This initializes the Streamlit human-in-the-loop dashboard (on port `8501`) and triggers the FastAPI REST endpoints (on port `8000`) simultaneously in the background.
 
 ---
 
-## Configuration Settings
+## ⚙️ Configuration & Credentials
 
-Configure LLM keys inside `.env`:
+Setup your `.env` configuration:
 
 ```env
 APP_MODE=local
-MOCK_MODE=true
-
-# Model choice configuration
+MOCK_MODE=true # Toggle false to connect live API keys
 LLM_PROVIDER=mock
 
+# Gemini configuration
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-1.5-flash
 
+# OpenAI configuration
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
 
+# Anthropic configuration
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-3-5-sonnet-latest
 
+# Groq configuration
 GROQ_API_KEY=
 GROQ_MODEL=llama-3.1-70b-versatile
-
-DATABASE_URL=sqlite:///bidforge.db
-MAX_UPLOAD_MB=50
-ENABLE_OCR=false
-ENABLE_DEMO_DATA=true
 ```
 
-To run offline, leave `MOCK_MODE=true` and `LLM_PROVIDER=mock`. The system will parse documents heuristically and generate appropriate, contextual mock responses.
+If `MOCK_MODE=true` is set, the application operates fully offline. It will dynamically generate mock context, requirement IDs, compliance matrices, and proposal sections based on keywords found inside the briefs.
 
 ---
 
-## API Documentation
+## 📖 Advanced Features Setup
 
-The background API server exposes Swagger endpoints on `http://127.0.0.1:8000`.
+### 1. Scanning with OCR
+To parse image-only scanned PDFs, the pipeline uses `tesseract` and `pdf2image`. 
+If these system packages are missing, the system will gracefully issue a system notice banner and continue parsing with normal text loaders. To enable OCR:
+- **Windows**: Install [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) and add it to your System PATH variables. Download [poppler-windows](http://blog.alivate.com.au/poppler-windows/) and add the `bin/` directory to PATH.
+- **Mac**: Run `brew install tesseract poppler`
+- **Linux**: Run `sudo apt-get install tesseract-ocr poppler-utils`
 
-- `GET /health`: Check backend services status.
-- `GET /api/opportunities`: Fetch pipeline details.
-- `POST /api/opportunities/{id}/extract-requirements`: Parse document text and extract constraints.
-- `PATCH /api/compliance-matrix/items/{id}`: Modify compliance check decisions directly.
+### 2. Installing the Chrome Autocompleter Extension
+1. Open Google Chrome.
+2. Navigate to `chrome://extensions/` and enable **Developer Mode** (top-right toggle).
+3. Click **Load unpacked** (top-left button).
+4. Select the `browser-extension/` directory inside this repository.
+5. Focus any text field in a procurement portal page, open the extension popup, select your active opportunity, and click any RAG compliance answer to auto-fill the form field instantly.
+
+### 3. Git-Like Version Diffs
+When editing a proposal draft section under **Proposal Builder**:
+- Click **Save Draft Changes** to automatically log the current draft state as a version index.
+- Use the **Version Control History** box below the editor to select historic timestamps, compare texts side-by-side, and restore previous versions.
+
+### 4. Hybrid Semantic Retrieval
+When API keys for Gemini or OpenAI are configured, the **Evidence Mapping** page automatically queries dense vectors using:
+- `text-embedding-004` (Gemini)
+- `text-embedding-3-small` (OpenAI)
+If API keys are absent or Mock Mode is enabled, the index falls back to sparse TF-IDF vectors, ensuring zero-cost matching runs smoothly.
 
 ---
 
-## Testing Guide
-
-Execute the unit tests:
+## 🧪 Testing
+Run the complete unit and regression test suite:
 
 ```bash
-pytest
+python -m pytest
 ```
 
 ---
 
-## Roadmap
+## 🌐 Backend REST Endpoints
+Programmatic interactions are supported via port `8000`. You can inspect the Swagger interface at `http://127.0.0.1:8000/docs`.
 
-- [ ] SharePoint / Google Drive auto-sync connectors
-- [ ] Multi-tenant workspace RBAC permissions
-- [ ] Browser extension for portal autocompletion
-- [ ] PDF OCR parser engine integration
+#### Python Programmatic Fetch Sample
+```python
+import requests
+
+# Fetch pipeline opportunities from local sqlite database
+response = requests.get("http://127.0.0.1:8000/api/opportunities")
+print(response.json())
+```
 
 ---
 
-## License
-
-This project is licensed under the MIT License.
+## ⚖️ License
+Licensed under the [MIT License](LICENSE).
