@@ -52,7 +52,7 @@ bidforge-ai/
 
 ---
 
-## 🎨 Colorful Architectural Diagrams
+## 🎨 Architectural Diagrams
 
 ### 1. System Architecture
 
