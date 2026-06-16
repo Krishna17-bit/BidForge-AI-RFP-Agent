@@ -2,197 +2,246 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+import time
+from typing import Any, Optional
+from datetime import datetime
 
-from .llm_clients import LLMGateway, LLMError
+from .llm_clients import LLMGateway, LLMResult
 from .utils import extract_json
+from .database import execute_query
 
-SYSTEM = """You are a senior proposal strategist and AI delivery architect.
-You create truthful, evidence-aware RFP analysis for technology services bids.
-Never invent client requirements. If a detail is not present, mark it unknown or ask a clarifying question.
-Return valid JSON only when requested. Avoid mentioning LLM providers, model names, or internal implementation details."""
+SYSTEM_PROMPT = """You are a senior proposal strategist, capture manager, and AI delivery architect.
+You create detailed, evidence-aware analyses for technology and professional services bids.
+Never invent client requirements. If a detail is not present, mark it as unknown.
+Return valid JSON only. Avoid mentioning LLM provider details, model names, or internal prompts."""
 
-
-def _compact_json(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, indent=2)
-
+def _log_run(opp_id: str, operation: str, input_summary: str, output: LLMResult, status: str = "Success"):
+    try:
+        now_str = datetime.now().isoformat()
+        log_id = f"RUN_{int(time.time() * 1000)}"
+        execute_query("""
+        INSERT INTO audit_logs (id, opportunity_id, operation, input_summary, output_summary, provider, model, latency, tokens, status, timestamp, user)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log_id,
+            opp_id,
+            operation,
+            input_summary[:2000],
+            output.text[:2000],
+            output.engine_used,
+            f"tokens={output.prompt_tokens + output.completion_tokens}",
+            output.latency_sec,
+            output.prompt_tokens + output.completion_tokens,
+            status,
+            now_str,
+            "BidForge AI Agent"
+        ))
+    except Exception as e:
+        print(f"Failed to log run: {e}")
 
 class BidAgents:
-    def __init__(self, llm: LLMGateway | None = None):
+    def __init__(self, llm: Optional[LLMGateway] = None):
         self.llm = llm or LLMGateway()
 
-    def intake_requirements(self, rfp_text: str, company_profile: str, depth: str) -> dict[str, Any]:
+    def intake_requirements(self, opp_id: str, rfp_text: str, company_profile: str, depth: str) -> dict[str, Any]:
         prompt = f"""
-Analyze this opportunity like a bid manager.
+        Analyze this opportunity like a bid manager.
+        
+        Return JSON with exactly these keys:
+        project_title: string
+        opportunity_summary: string
+        bid_recommendation: one of ["Strong Bid", "Bid With Caution", "No Bid", "Needs More Info"]
+        bid_score: integer 0-100
+        win_themes: array of 4-8 strings
+        requirements: array of objects with id, text, category, priority, deliverable, evidence_needed
+        
+        Depth: {depth}
+        Company Profile/Capabilities:
+        {company_profile or 'No company profile provided.'}
+        
+        RFP text:
+        {rfp_text}
+        """
+        
+        # Execute LLM call
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        # Log to db
+        _log_run(opp_id, "Requirements Intake", f"RFP size={len(rfp_text)}, depth={depth}", res)
+        return data
 
-Return JSON with exactly these keys:
-project_title: string
-opportunity_summary: string
-bid_recommendation: one of ["Strong Bid", "Bid With Caution", "No Bid", "Needs More Info"]
-bid_score: integer 0-100
-win_themes: array of 4-8 strings
-requirements: array of objects with id, text, category, priority, deliverable, evidence_needed
-
-Depth: {depth}
-Company/profile/capabilities:
-{company_profile or 'No company profile was provided. Infer only generic fit and mark missing capability evidence.'}
-
-RFP / brief text:
-{rfp_text}
-"""
-        return self._json(prompt)
-
-    def compliance_and_risks(self, rfp_text: str, company_profile: str, requirements: list[dict], evidence_pack: dict[str, list[dict]], depth: str) -> dict[str, Any]:
+    def compliance_and_risks(
+        self, 
+        opp_id: str, 
+        rfp_text: str, 
+        company_profile: str, 
+        requirements: list[dict], 
+        evidence_pack: dict[str, list[dict]], 
+        depth: str
+    ) -> dict[str, Any]:
         prompt = f"""
-Create a compliance matrix, risk register, and clarifying questions.
+        Create a compliance matrix, risk register, and clarifying questions.
+        
+        Return JSON with exactly these keys:
+        compliance_matrix: array of objects with requirement_id, requirement, status, evidence, response_strategy, owner, confidence
+        risks: array of objects with risk, severity, why_it_matters, mitigation, bid_impact
+        clarifying_questions: array of strings
+        
+        Rules:
+        - status must be "Compliant", "Partial", "Gap", or "Unknown".
+        - severity must be "High", "Medium", "Low", or "Critical".
+        - bid_impact must be "Blocker", "Major", or "Minor".
+        - Use supplied evidence pack; do not fabricate proof.
+        - For gaps, propose a practical mitigation or partner/subcontract approach.
+        
+        Depth: {depth}
+        Company Profile/Capabilities:
+        {company_profile or 'No company profile provided.'}
+        
+        Extracted Requirements:
+        {json.dumps(requirements, indent=2)}
+        
+        Evidence Pack (RAG Context):
+        {json.dumps(evidence_pack, indent=2)}
+        
+        Original RFP text for reference:
+        {rfp_text[:30000]}
+        """
+        
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        _log_run(opp_id, "Compliance & Risk Analysis", f"Reqs count={len(requirements)}", res)
+        return data
 
-Return JSON with exactly these keys:
-compliance_matrix: array of objects with requirement_id, requirement, status, evidence, response_strategy, owner, confidence
-risks: array of objects with risk, severity, why_it_matters, mitigation, bid_impact
-clarifying_questions: array of strings
-
-Rules:
-- status must be Compliant, Partial, Gap, or Unknown.
-- Use supplied evidence pack; do not fabricate proof.
-- For gaps, propose a practical mitigation or partner/subcontract approach.
-- Include hidden risks: deadlines, integrations, data access, compliance, acceptance criteria, scope ambiguity, payment dependencies.
-
-Depth: {depth}
-Company/profile/capabilities:
-{company_profile or 'No company profile was provided.'}
-
-Extracted requirements:
-{_compact_json(requirements)}
-
-Evidence pack:
-{_compact_json(evidence_pack)}
-
-Original RFP text for context:
-{rfp_text[:50000]}
-"""
-        return self._json(prompt)
-
-    def architecture_and_delivery(self, rfp_text: str, company_profile: str, analysis_so_far: dict, depth: str) -> dict[str, Any]:
+    def architecture_and_delivery(
+        self, 
+        opp_id: str, 
+        rfp_text: str, 
+        company_profile: str, 
+        analysis_so_far: dict, 
+        depth: str
+    ) -> dict[str, Any]:
         prompt = f"""
-You are the solution architect for a proposal response.
+        You are the solution architect for a proposal response.
+        
+        Return JSON with exactly these keys:
+        solution_architecture: string, detailed but concise, with components, data flow, security/governance, and assumptions
+        delivery_plan: array of objects with milestone, duration, outputs, dependencies
+        pricing_assumptions: array of strings
+        
+        Make this useful for a technology, consulting, or software proposal.
+        Do not estimate exact prices unless the RFP has budget details. Identify key cost drivers and exclusions instead.
+        
+        Depth: {depth}
+        Company Profile/Capabilities:
+        {company_profile or 'No company profile provided.'}
+        
+        Analysis So Far:
+        {json.dumps(analysis_so_far, indent=2)}
+        
+        RFP text:
+        {rfp_text[:25000]}
+        """
+        
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        _log_run(opp_id, "Architecture & Delivery Planning", f"Depth={depth}", res)
+        return data
 
-Return JSON with exactly these keys:
-solution_architecture: string, detailed but concise, with components, data flow, security/governance, and assumptions
-delivery_plan: array of objects with milestone, duration, outputs, dependencies
-pricing_assumptions: array of strings
-
-Make this useful for an AI/ML, automation, RAG, or software consulting proposal. If the RFP is not technical, adapt to the closest service delivery plan.
-Do not put exact prices unless the RFP provides a budget. Give pricing assumptions and effort drivers instead.
-
-Depth: {depth}
-Company/profile/capabilities:
-{company_profile or 'No company profile was provided.'}
-
-Analysis so far:
-{_compact_json(analysis_so_far)}
-
-RFP text:
-{rfp_text[:45000]}
-"""
-        return self._json(prompt)
-
-    def proposal_writer(self, rfp_text: str, company_profile: str, bundle: dict, tone: str) -> dict[str, Any]:
+    def proposal_writer(
+        self, 
+        opp_id: str, 
+        rfp_text: str, 
+        company_profile: str, 
+        bundle: dict, 
+        tone: str
+    ) -> dict[str, Any]:
         prompt = f"""
-Write a polished client-ready proposal draft from the analysis.
+        Write a polished, client-ready proposal draft in Markdown.
+        
+        Return JSON with exactly these keys:
+        executive_summary: string
+        proposal_draft: string in Markdown format
+        
+        Proposal structure to follow:
+        # Proposal: [Project Name]
+        ## Understanding of Requirements
+        ## Proposed Solution
+        ## Delivery Plan
+        ## Compliance and Assumptions
+        ## Key Risks and Mitigations
+        ## Questions Before Final Scope
+        ## Why This Team
+        ## Next Steps
+        
+        Tone: {tone}
+        Rules:
+        - Avoid corporate buzzwords or sounding overly generic.
+        - Tie points to compliance requirement IDs (e.g. [REQ-001]) where possible.
+        - Do not mention LLMs or backend systems.
+        
+        Company Profile/Capabilities:
+        {company_profile or 'No company profile provided.'}
+        
+        Full RFP Context:
+        {rfp_text[:20000]}
+        
+        Analysis Bundle:
+        {json.dumps(bundle, indent=2)}
+        """
+        
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        _log_run(opp_id, "Proposal Draft Generator", f"Tone={tone}", res)
+        return data
 
-Return JSON with exactly these keys:
-executive_summary: string
-proposal_draft: string in markdown
-
-Proposal structure:
-# Proposal: [Project]
-## Understanding of Requirements
-## Proposed Solution
-## Delivery Plan
-## Compliance and Assumptions
-## Key Risks and Mitigations
-## Questions Before Final Scope
-## Why This Team
-## Next Steps
-
-Tone: {tone}
-Rules:
-- Do not sound generic.
-- Do not overclaim.
-- Tie proposal points to the actual RFP requirements.
-- Do not mention LLM providers or backend choices.
-
-Company/profile/capabilities:
-{company_profile or 'No company profile was provided. Keep Why This Team generic and honest.'}
-
-Analysis bundle:
-{_compact_json(bundle)}
-
-RFP text:
-{rfp_text[:35000]}
-"""
-        return self._json(prompt)
-
-    def reviewer(self, bundle: dict, rfp_text: str) -> dict[str, Any]:
+    def reviewer(self, opp_id: str, bundle: dict, rfp_text: str) -> dict[str, Any]:
         prompt = f"""
-Act as a strict proposal quality reviewer.
+        Act as a strict red-team proposal reviewer.
+        
+        Return JSON with exactly these keys:
+        reviewer_notes: array of 5-10 strings (critiques, unsupported claims, missing exclusions)
+        quality_score: integer 0-100 (overall evaluation score)
+        
+        Check for:
+        - Requirement coverage
+        - Compliance credibility (are claims backed by evidence?)
+        - Pricing risk & missing exclusions
+        - Actionability of delivery milestones
+        
+        Bundle Content:
+        {json.dumps(bundle, indent=2)}
+        
+        RFP reference:
+        {rfp_text[:15000]}
+        """
+        
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        _log_run(opp_id, "Red-Team Quality Review", f"Reviewing opp_id={opp_id}", res)
+        return data
 
-Return JSON with exactly these keys:
-reviewer_notes: array of 5-10 strings
-quality_score: integer 0-100
-
-Review against:
-- requirement coverage
-- compliance traceability
-- clarity of proposal
-- missing assumptions
-- risk handling
-- whether the proposal is specific enough to win
-- whether any claims are unsupported
-
-Bundle:
-{_compact_json(bundle)}
-
-RFP text:
-{rfp_text[:25000]}
-"""
-        return self._json(prompt)
-
-    def _json(self, prompt: str) -> dict[str, Any]:
-        result = self.llm.generate(prompt, system=SYSTEM, json_mode=True)
-        return extract_json(result.text)
-
-
-def heuristic_requirements(text: str, company_profile: str = "") -> dict[str, Any]:
-    """Offline fallback so the app can still demo without API keys."""
-    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines()]
-    lines = [x for x in lines if len(x) > 35]
-    keyword_re = re.compile(r"\b(must|shall|required|requirement|scope|deliverable|timeline|security|integration|api|dashboard|report|support|deadline|budget|compliance|data|documentation)\b", re.I)
-    candidates = [x for x in lines if keyword_re.search(x)] or lines[:20]
-    reqs = []
-    for i, line in enumerate(candidates[:18], start=1):
-        priority = "Must" if re.search(r"\b(must|shall|required)\b", line, re.I) else "Should"
-        category = "Security/Compliance" if re.search(r"security|privacy|compliance|audit", line, re.I) else "Delivery"
-        if re.search(r"api|integration|dashboard|data|model|automation|rag|agent", line, re.I):
-            category = "Technical"
-        reqs.append({
-            "id": f"R-{i:03d}",
-            "text": line[:500],
-            "category": category,
-            "priority": priority,
-            "deliverable": "To be confirmed from final scope",
-            "evidence_needed": "Past similar work, architecture approach, timeline, and acceptance criteria",
-        })
-    return {
-        "project_title": "RFP / Proposal Opportunity",
-        "opportunity_summary": "Offline heuristic analysis created from requirement-like lines in the uploaded brief. Add API keys for full strategic analysis.",
-        "bid_recommendation": "Needs More Info",
-        "bid_score": 58,
-        "win_themes": [
-            "Evidence-backed proposal instead of generic AI drafting",
-            "Clear scope extraction and risk control",
-            "Practical milestone-based delivery",
-            "Human approval before final submission",
-        ],
-        "requirements": reqs,
-    }
+    def answer_questionnaire(self, opp_id: str, questions: list[str], company_profile: str) -> dict[str, Any]:
+        prompt = f"""
+        You are responding to a client questionnaire or security audit.
+        
+        Return JSON with exactly this key:
+        answers: array of objects, each with "question", "answer", and "confidence" (0-100 score).
+        
+        Company Capabilities and Security Policies:
+        {company_profile}
+        
+        Questions list:
+        {json.dumps(questions, indent=2)}
+        """
+        
+        res = self.llm.generate(prompt, system=SYSTEM_PROMPT, json_mode=True)
+        data = extract_json(res.text)
+        
+        _log_run(opp_id, "Questionnaire Autocompletion", f"Questions count={len(questions)}", res)
+        return data

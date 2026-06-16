@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .agents import BidAgents, heuristic_requirements
+from .agents import BidAgents
 from .document_loader import LoadedDocument
 from .llm_clients import LLMError
 from .retrieval import EvidenceIndex
@@ -36,6 +36,7 @@ class BidOrchestrator:
         tone: str = "Consultative, confident, concise",
         progress_callback=None,
     ) -> dict[str, Any]:
+        opp_id = "OPP_RUN"
         all_docs = rfp_docs + knowledge_docs
         rfp_text = "\n\n".join([f"# {d.name}\n{d.text}" for d in rfp_docs])
         knowledge_text = "\n\n".join([f"# {d.name}\n{d.text}" for d in knowledge_docs])
@@ -43,9 +44,6 @@ class BidOrchestrator:
         if knowledge_text.strip():
             profile = f"{profile}\n\nUploaded company/capability knowledge:\n{knowledge_text[:30000]}".strip()
 
-        # Keep requirement-source context separate from capability proof.
-        # This makes the Evidence tab clearer: CV/profile/case-study matches
-        # appear first, while RFP text is labeled only as source context.
         profile_doc = None
         if (company_profile or "").strip():
             profile_doc = LoadedDocument(
@@ -63,13 +61,12 @@ class BidOrchestrator:
         try:
             if progress_callback:
                 progress_callback("Extracting requirements and bid fit...")
-            intake = self.agents.intake_requirements(rfp_text, profile, depth)
-        except LLMError:
-            intake = heuristic_requirements(rfp_text, profile)
-            intake["reviewer_notes"] = ["Running in offline heuristic mode because no valid API key was found."]
+            intake = self.agents.intake_requirements(opp_id, rfp_text, profile, depth)
+        except LLMError as exc:
+            # Fallback is handled in llm gateway directly
+            raise exc
         except Exception as exc:
-            intake = heuristic_requirements(rfp_text, profile)
-            intake["reviewer_notes"] = [f"Primary analysis failed, so offline heuristic mode was used: {exc}"]
+            raise exc
 
         requirements = _as_list(intake.get("requirements"))
 
@@ -96,7 +93,7 @@ class BidOrchestrator:
         try:
             if progress_callback:
                 progress_callback("Building compliance matrix, risk register, and clarification questions...")
-            compliance = self.agents.compliance_and_risks(rfp_text, profile, requirements, evidence_pack, depth)
+            compliance = self.agents.compliance_and_risks(opp_id, rfp_text, profile, requirements, evidence_pack, depth)
         except Exception as exc:
             compliance = self._fallback_compliance(requirements, evidence_pack, exc)
 
@@ -104,7 +101,7 @@ class BidOrchestrator:
         try:
             if progress_callback:
                 progress_callback("Designing solution architecture and delivery plan...")
-            architecture = self.agents.architecture_and_delivery(rfp_text, profile, analysis_so_far, depth)
+            architecture = self.agents.architecture_and_delivery(opp_id, rfp_text, profile, analysis_so_far, depth)
         except Exception as exc:
             architecture = self._fallback_architecture(exc)
 
@@ -112,7 +109,7 @@ class BidOrchestrator:
         try:
             if progress_callback:
                 progress_callback("Writing proposal draft...")
-            proposal = self.agents.proposal_writer(rfp_text, profile, draft_input, tone)
+            proposal = self.agents.proposal_writer(opp_id, rfp_text, profile, draft_input, tone)
         except Exception as exc:
             proposal = self._fallback_proposal(draft_input, exc)
 
@@ -120,7 +117,7 @@ class BidOrchestrator:
         try:
             if progress_callback:
                 progress_callback("Running final proposal quality review...")
-            review = self.agents.reviewer(bundle_dict, rfp_text)
+            review = self.agents.reviewer(opp_id, bundle_dict, rfp_text)
         except Exception as exc:
             review = {"reviewer_notes": [f"Automated review unavailable: {exc}"], "quality_score": int(bundle_dict.get("bid_score", 50) or 50)}
 
